@@ -7,10 +7,10 @@ export default defineConfig(({ mode }) => {
 
   return {
     plugins: [react()],
+    base: './', // <--- ВАЖНО: Делает пути относительными, чинит белый экран на GitHub Pages
     define: {
-      // Передаем в код ТОЛЬКО API_KEY. 
-      // Токен бота и другие секреты сюда не попадут, даже если будут в окружении.
-      'process.env.API_KEY': JSON.stringify(env.API_KEY || process.env.API_KEY)
+      // Если ключа нет, передаем пустую строку, чтобы приложение не падало с ошибкой "undefined" при запуске
+      'process.env.API_KEY': JSON.stringify(env.API_KEY || process.env.API_KEY || "")
     }
   };
 });

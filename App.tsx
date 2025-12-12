@@ -5,7 +5,7 @@ import { Dream, UserProfile, Screen } from './types';
 import { getProfile, saveProfile, getDreams, saveDream } from './services/storageService';
 import { interpretDream } from './services/geminiService';
 import { SPHERE_COST, BOT_USERNAME } from './constants';
-import { Send, PlusCircle, Coins, Gift, AlertCircle, Share2 } from 'lucide-react';
+import { Send, PlusCircle, Coins, Gift, AlertCircle, Share2, Loader2 } from 'lucide-react';
 
 const App = () => {
   const [activeScreen, setActiveScreen] = useState<Screen>('home');
@@ -15,40 +15,57 @@ const App = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [lastInterpretation, setLastInterpretation] = useState<Dream | null>(null);
   
+  // Храним ID текущего пользователя. По умолчанию 'guest', если не в Telegram.
+  const [currentUserId, setCurrentUserId] = useState<string | number>('guest');
+  
   // Journal State
   const [selectedDate, setSelectedDate] = useState<Date | null>(new Date());
 
   useEffect(() => {
     // 1. Initialize Telegram WebApp
-    if (window.Telegram?.WebApp) {
-      window.Telegram.WebApp.ready();
-      window.Telegram.WebApp.expand();
-    }
+    let userId: string | number = 'guest';
 
-    // 2. Load Profile
-    const loadedProfile = getProfile();
+    if (window.Telegram?.WebApp) {
+      try {
+          window.Telegram.WebApp.ready();
+          // expand() может вызвать ошибку в обычном браузере, оборачиваем
+          window.Telegram.WebApp.expand();
+          
+          const tgUser = window.Telegram.WebApp.initDataUnsafe?.user;
+          if (tgUser) {
+            userId = tgUser.id;
+          }
+      } catch (e) {
+          console.warn("Telegram WebApp initialization warning:", e);
+      }
+    }
     
-    // 3. Sync with Telegram Data if available
-    const tgUser = window.Telegram?.WebApp?.initDataUnsafe?.user;
-    if (tgUser) {
+    // Сохраняем ID в стейт, чтобы использовать при сохранении снов
+    setCurrentUserId(userId);
+
+    // 2. Load Profile specific to this User ID
+    const loadedProfile = getProfile(userId);
+    
+    // 3. Update profile with latest Telegram info if available (sync name)
+    if (window.Telegram?.WebApp?.initDataUnsafe?.user) {
+      const tgUser = window.Telegram.WebApp.initDataUnsafe.user;
       loadedProfile.telegramId = tgUser.id;
       loadedProfile.username = tgUser.first_name;
+      // Сохраняем обновленные метаданные
+      saveProfile(loadedProfile, userId);
     }
 
     // 4. Check for Referral (Incoming)
-    // NOTE: This runs on the CLIENT side of the invited user. 
-    // Without a backend, we can't credit the INVITER instantly. 
-    // Here we just log the connection or giving a signup bonus to the NEW user.
     const startParam = window.Telegram?.WebApp?.initDataUnsafe?.start_param;
     if (startParam && !loadedProfile.isOnboarded) {
       console.log(`User invited by ID: ${startParam}`);
-      // Optional: Give bonus to the invited user for using a link
-      // loadedProfile.spheres += 1; 
+      // Здесь можно начислить бонус за рефералку
+      // loadedProfile.spheres += 1;
+      // saveProfile(loadedProfile, userId);
     }
 
     setProfile(loadedProfile);
-    saveProfile(loadedProfile);
-    setDreams(getDreams());
+    setDreams(getDreams(userId));
 
     if (!loadedProfile.isOnboarded) {
       setActiveScreen('onboarding');
@@ -59,7 +76,7 @@ const App = () => {
     if (profile) {
       const updated = { ...profile, isOnboarded: true };
       setProfile(updated);
-      saveProfile(updated);
+      saveProfile(updated, currentUserId);
       setActiveScreen('home');
     }
   };
@@ -91,7 +108,7 @@ const App = () => {
       // Save Dream
       const updatedDreams = [newDream, ...dreams];
       setDreams(updatedDreams);
-      saveDream(newDream);
+      saveDream(newDream, currentUserId);
 
       // Update Profile
       const updatedProfile = {
@@ -100,14 +117,15 @@ const App = () => {
         totalDreamsAnalyzed: profile.totalDreamsAnalyzed + 1
       };
       setProfile(updatedProfile);
-      saveProfile(updatedProfile);
+      saveProfile(updatedProfile, currentUserId);
 
       setLastInterpretation(newDream);
       setCurrentDreamText('');
       setActiveScreen('result');
     } catch (error) {
       console.error(error);
-      alert("Произошла ошибка при анализе сна.");
+      const errorMessage = error instanceof Error ? error.message : "Произошла ошибка при анализе.";
+      alert(errorMessage);
       setActiveScreen('input');
     } finally {
       setIsLoading(false);
@@ -118,7 +136,7 @@ const App = () => {
     if (!profile) return;
     const updated = { ...profile, spheres: profile.spheres + amount };
     setProfile(updated);
-    saveProfile(updated);
+    saveProfile(updated, currentUserId);
     alert(`Вы получили ${amount} Сфер!`);
   };
 
@@ -131,7 +149,7 @@ const App = () => {
     // Telegram Share URL scheme
     const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(inviteLink)}&text=${encodeURIComponent(shareText)}`;
 
-    if (window.Telegram?.WebApp) {
+    if (window.Telegram?.WebApp && window.Telegram.WebApp.openTelegramLink) {
       window.Telegram.WebApp.openTelegramLink(shareUrl);
     } else {
       // Fallback for browser testing
@@ -328,6 +346,7 @@ const App = () => {
                <div className="w-3 h-3 bg-mystic-500 rounded-full shadow-[0_0_10px_#8b5cf6]"></div>
             </div>
             <p className="text-slate-400 text-sm mt-4">Проанализировано снов: <span className="text-white font-semibold">{profile.totalDreamsAnalyzed}</span></p>
+            <p className="text-xs text-slate-600 mt-2">ID: {currentUserId}</p>
           </div>
         </div>
 
@@ -365,7 +384,6 @@ const App = () => {
             </div>
           </button>
           
-          {/* Helper text for the user since backend is missing */}
           <p className="text-xs text-center text-slate-600 mt-2">
             Сферы начисляются, когда друг запустит бот по вашей ссылке.
           </p>
@@ -399,7 +417,13 @@ const App = () => {
 
   // --- MAIN RENDER ---
   
-  if (!profile) return null; // Or a loading spinner
+  if (!profile) {
+      return (
+        <div className="flex flex-col items-center justify-center h-screen bg-night-900 text-white">
+          <Loader2 className="w-8 h-8 animate-spin text-mystic-500" />
+        </div>
+      );
+  }
 
   if (activeScreen === 'onboarding') {
       return renderOnboarding();
@@ -418,7 +442,6 @@ const App = () => {
   );
 };
 
-// Helper Icon Component for consistency
 const MoonIcon = ({ size, className }: { size: number, className?: string }) => (
   <svg 
     xmlns="http://www.w3.org/2000/svg" 
